@@ -1,9 +1,10 @@
 from fastapi import APIRouter, HTTPException, status, Query, Path, Depends
+from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime
 
 from ..models.item import Item, ItemResponse, ItemUpdate, MessageResponse
-from ..database.fake_db import fake_items_db, get_current_timestamp
+from ..database.database import get_db
+from ..database.crud import item_crud
 
 router = APIRouter()
 
@@ -13,106 +14,125 @@ def read_items(
     limit: int = Query(10, ge=1, le=100, description="Maximum number of items to be returned"),
     category: Optional[str] = Query(None, description="Filter by category"),
     min_price: Optional[float] = Query(None, ge=0, description="Minimum Price filter"),
-    max_price: Optional[float] = Query(None, ge=0, description="Maximum Price filter")
+    max_price: Optional[float] = Query(None, ge=0, description="Maximum Price filter"),
+    db: Session = Depends(get_db)
 ):
-    items = fake_items_db.get_all_items()
-
-    if category:
-        items = [item for item in items if item.get("category") == category]
+    items = item_crud.get_all_items(
+        db=db, 
+        skip=skip, 
+        limit=limit, 
+        category=category, 
+        min_price=min_price, 
+        max_price=max_price
+    )
     
-    if min_price is not None:
-        items = [item for item in items if item.get("price", 0) >= min_price]
+    # Convert to response format with total_price
+    response_items = []
+    for item in items:
+        total_price = item.price + (item.tax or 0)
+        response_items.append(ItemResponse(
+            id=item.id,
+            name=item.name,
+            description=item.description,
+            price=item.price,
+            tax=item.tax,
+            total_price=total_price,
+            category=item.category,
+            created_at=item.created_at,
+            updated_at=item.updated_at
+        ))
     
-    if max_price is not None:
-        items = [item for item in items if item.get("price", 0) <= max_price]
-
-    items = items[skip:skip + limit]
-    
-    return items
+    return response_items
 
 @router.get("/items/{item_id}", response_model=ItemResponse)
 def read_item(
     item_id: int = Path(..., gt=0, description="ID of the item to retrieve"),
-    include_tax: bool = Query(False, description="Include tax in response")
+    include_tax: bool = Query(False, description="Include tax in response"),
+    db: Session = Depends(get_db)
 ):
-    if not fake_items_db.item_exists(item_id):
+    db_item = item_crud.get_item_by_id(db, item_id)
+    if not db_item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Item with id {item_id} not found"
         )
 
-    item = fake_items_db.get_item(item_id)
-
-    if not include_tax:
-        item_copy = item.copy()
-        item_copy["tax"] = None
-        item_copy["total_price"] = item_copy["price"]
-        return item_copy
+    total_price = db_item.price + (db_item.tax or 0)
     
-    return item
+    response_item = ItemResponse(
+        id=db_item.id,
+        name=db_item.name,
+        description=db_item.description,
+        price=db_item.price,
+        tax=db_item.tax if include_tax else None,
+        total_price=total_price if include_tax else db_item.price,
+        category=db_item.category,
+        created_at=db_item.created_at,
+        updated_at=db_item.updated_at
+    )
+    
+    return response_item
 
 @router.post("/items/", response_model=ItemResponse, status_code=status.HTTP_201_CREATED)
 def create_item(
-    item: Item, 
-    timestamp: datetime = Depends(get_current_timestamp)
+    item: Item,
+    db: Session = Depends(get_db)
 ):
-    total_price = item.price + (item.tax or 0)
-
-    new_item = ItemResponse(
-        id=fake_items_db.item_counter,
-        name=item.name,
-        description=item.description,
-        price=item.price,
-        tax=item.tax,
+    db_item = item_crud.create_item(db=db, item=item)
+    total_price = db_item.price + (db_item.tax or 0)
+    
+    return ItemResponse(
+        id=db_item.id,
+        name=db_item.name,
+        description=db_item.description,
+        price=db_item.price,
+        tax=db_item.tax,
         total_price=total_price,
-        category=item.category,
-        created_at=timestamp
+        category=db_item.category,
+        created_at=db_item.created_at,
+        updated_at=db_item.updated_at
     )
-
-    item_dict = new_item.dict()
-    item_id = fake_items_db.create_item(item_dict)
-    item_dict["id"] = item_id
-
-    return new_item
 
 @router.put("/items/{item_id}", response_model=ItemResponse)
 def update_item(
     item_update: ItemUpdate,
     item_id: int = Path(..., gt=0, description="ID of the item to update"),
-    timestamp: datetime = Depends(get_current_timestamp)
+    db: Session = Depends(get_db)
 ):
-    if not fake_items_db.item_exists(item_id):
+    db_item = item_crud.update_item(db=db, item_id=item_id, item_update=item_update)
+    if not db_item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Item with id {item_id} not found"
         )
     
-    existing_item = fake_items_db.get_item(item_id).copy()
-    update_data = item_update.dict(exclude_unset=True)
-
-    for field, value in update_data.items():
-        existing_item[field] = value
-
-    existing_item["total_price"] = existing_item["price"] + (existing_item.get("tax") or 0)
-    existing_item["updated_at"] = timestamp
-
-    fake_items_db.update_item(item_id, existing_item)
-
-    return ItemResponse(**existing_item)
+    total_price = db_item.price + (db_item.tax or 0)
+    
+    return ItemResponse(
+        id=db_item.id,
+        name=db_item.name,
+        description=db_item.description,
+        price=db_item.price,
+        tax=db_item.tax,
+        total_price=total_price,
+        category=db_item.category,
+        created_at=db_item.created_at,
+        updated_at=db_item.updated_at
+    )
 
 @router.delete("/items/{item_id}", response_model=MessageResponse)
 def delete_item(
-    item_id: int = Path(..., gt=0, description="ID of the item to delete")
+    item_id: int = Path(..., gt=0, description="ID of the item to delete"),
+    db: Session = Depends(get_db)
 ):
-    if not fake_items_db.item_exists(item_id):
+    db_item = item_crud.delete_item(db=db, item_id=item_id)
+    if not db_item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Item with id {item_id} not found"
         )
     
-    deleted_item = fake_items_db.delete_item(item_id)
-
     return MessageResponse(
-        message=f"Item '{deleted_item['name']}' deleted successfully",
+        message=f"Item '{db_item.name}' deleted successfully",
         item_id=item_id
     )

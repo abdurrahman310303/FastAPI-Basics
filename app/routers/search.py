@@ -1,8 +1,10 @@
-from fastapi import APIRouter, HTTPException, status, Query
+from fastapi import APIRouter, HTTPException, status, Query, Depends
+from sqlalchemy.orm import Session
 from typing import List
 
 from ..models.item import ItemResponse
-from ..database.fake_db import fake_items_db
+from ..database.database import get_db
+from ..database.crud import item_crud
 
 router = APIRouter()
 
@@ -10,19 +12,31 @@ router = APIRouter()
 def search_items(
     q: str = Query(..., min_length=1, description="Search query"),
     skip: int = Query(0, ge=0),
-    limit: int = Query(10, ge=1, le=100)
+    limit: int = Query(10, ge=1, le=100),
+    db: Session = Depends(get_db)
 ):
-    matching_items = []
-
-    for item in fake_items_db.get_all_items():
-        if (q.lower() in item["name"].lower() or 
-            (item.get("description") and q.lower() in item["description"].lower())):
-            matching_items.append(item)
+    items = item_crud.search_items(db=db, query=q, skip=skip, limit=limit)
     
-    if not matching_items:
+    if not items:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No items found matching '{q}'"
         )
     
-    return matching_items[skip:skip + limit]
+    # Convert to response format
+    response_items = []
+    for item in items:
+        total_price = item.price + (item.tax or 0)
+        response_items.append(ItemResponse(
+            id=item.id,
+            name=item.name,
+            description=item.description,
+            price=item.price,
+            tax=item.tax,
+            total_price=total_price,
+            category=item.category,
+            created_at=item.created_at,
+            updated_at=item.updated_at
+        ))
+    
+    return response_items

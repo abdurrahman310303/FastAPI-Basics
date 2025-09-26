@@ -2,8 +2,11 @@ from fastapi import FastAPI
 from datetime import datetime
 
 from .routers import items, categories, search
-from .database.fake_db import fake_items_db
+from .database.database import create_tables
 from .core.config import settings
+
+# Create database tables on startup
+create_tables()
 
 app = FastAPI(
     title=settings.app_name,
@@ -19,8 +22,9 @@ app.include_router(search.router)
 @app.get('/', response_model=dict)
 def read_root():
     return {
-        "Hello": "This is my first FastAPI Practice",
+        "Hello": "This is my first FastAPI Practice with SQLite Database",
         "Version": settings.app_version,
+        "database": "SQLite",
         "endpoints": {
             "docs": "/docs",
             "items": "/items/",
@@ -33,5 +37,6 @@ def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.now(),
-        "total_items": len(fake_items_db.items_db)
+        "database": "SQLite Connected",
+        "version": settings.app_version
     }

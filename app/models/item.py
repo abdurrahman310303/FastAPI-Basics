@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional
 from datetime import datetime
 
@@ -10,6 +10,8 @@ class Item(BaseModel):
     category: Optional[str] = Field(None, description="Item category")
 
 class ItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     name: str
     description: Optional[str] = None
@@ -18,6 +20,15 @@ class ItemResponse(BaseModel):
     total_price: float
     category: Optional[str] = None
     created_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    def __init__(self, **data):
+        # Calculate total_price if not provided
+        if 'total_price' not in data:
+            price = data.get('price', 0)
+            tax = data.get('tax', 0) or 0
+            data['total_price'] = price + tax
+        super().__init__(**data)
 
 class ItemUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
