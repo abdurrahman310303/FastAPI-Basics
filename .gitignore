@@ -1,2 +1,14 @@
 venv/
-__pycache__
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.env
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+.DS_Store
+*.db
+*.sqlite3
+.pytest_cache/
